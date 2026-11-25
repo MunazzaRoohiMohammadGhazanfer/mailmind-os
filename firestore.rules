@@ -1,0 +1,151 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwnerData(data) {
+      return isSignedIn() && data.uid == request.auth.uid;
+    }
+
+    // Connection check path
+    match /test/connection {
+      allow get: if true;
+    }
+
+    function isValidScheduledEmail(data) {
+      return data.keys().hasAll(['uid', 'to', 'subject', 'body', 'scheduleTime', 'status', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'to', 'subject', 'body', 'scheduleTime', 'status', 'createdAt'])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.to is string && data.to.size() >= 3 && data.to.size() <= 254
+        && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 300
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 10000
+        && data.scheduleTime is string && data.scheduleTime.size() >= 1 && data.scheduleTime.size() <= 64
+        && data.status in ['scheduled', 'sent', 'cancelled']
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    match /scheduledEmails/{docId} {
+      allow get: if isValidId(docId) && isOwnerData(existing());
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isValidId(docId) && isSignedIn() && isValidScheduledEmail(incoming());
+      allow update: if isValidId(docId)
+        && isOwnerData(existing())
+        && isValidScheduledEmail(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && existing().status != 'sent'
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'scheduleTime', 'subject', 'body']);
+      allow delete: if isValidId(docId) && isOwnerData(existing());
+    }
+
+    function isValidVipSender(data) {
+      return data.keys().hasAll(['uid', 'senderEmail', 'senderName', 'addedAt'])
+        && data.keys().hasOnly(['uid', 'senderEmail', 'senderName', 'addedAt'])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.senderEmail is string && data.senderEmail.size() >= 3 && data.senderEmail.size() <= 254
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 120
+        && data.addedAt is string && data.addedAt.size() <= 64;
+    }
+
+    match /vipSenders/{docId} {
+      allow get: if isValidId(docId) && isOwnerData(existing());
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isValidId(docId) && isSignedIn() && isValidVipSender(incoming());
+      allow update: if isValidId(docId)
+        && isOwnerData(existing())
+        && isValidVipSender(incoming())
+        && incoming().uid == existing().uid
+        && incoming().addedAt == existing().addedAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['senderName']);
+      allow delete: if isValidId(docId) && isOwnerData(existing());
+    }
+
+    function isValidSnoozedEmail(data) {
+      return data.keys().hasAll(['uid', 'emailId', 'snoozeUntil', 'status'])
+        && data.keys().hasOnly(['uid', 'emailId', 'subject', 'senderName', 'snoozeUntil', 'status'])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.emailId is string && data.emailId.size() >= 1 && data.emailId.size() <= 128
+        && (!('subject' in data) || (data.subject is string && data.subject.size() <= 300))
+        && (!('senderName' in data) || (data.senderName is string && data.senderName.size() <= 120))
+        && data.snoozeUntil is string && data.snoozeUntil.size() >= 1 && data.snoozeUntil.size() <= 64
+        && data.status in ['snoozed', 'woken'];
+    }
+
+    match /snoozedEmails/{docId} {
+      allow get: if isValidId(docId) && isOwnerData(existing());
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isValidId(docId) && isSignedIn() && isValidSnoozedEmail(incoming());
+      allow update: if isValidId(docId)
+        && isOwnerData(existing())
+        && isValidSnoozedEmail(incoming())
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'snoozeUntil']);
+      allow delete: if isValidId(docId) && isOwnerData(existing());
+    }
+
+    function isValidUserSettings(data, userId) {
+      return data.keys().hasAll(['uid', 'darkMode', 'language', 'agentsEnabled'])
+        && data.keys().hasOnly(['uid', 'darkMode', 'language', 'agentsEnabled', 'updatedAt'])
+        && data.uid is string && data.uid == request.auth.uid && data.uid == userId && data.uid.size() <= 128
+        && data.darkMode is bool
+        && data.language in ['en', 'hi']
+        && data.agentsEnabled is map
+        && data.agentsEnabled.size() <= 20
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    match /userSettings/{userId} {
+      allow get: if isValidId(userId) && isSignedIn() && userId == request.auth.uid;
+      allow create: if isValidId(userId) && isSignedIn() && isValidUserSettings(incoming(), userId);
+      allow update: if isValidId(userId)
+        && isSignedIn()
+        && userId == request.auth.uid
+        && isValidUserSettings(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['darkMode', 'language', 'agentsEnabled', 'updatedAt']);
+      allow delete: if isValidId(userId) && isSignedIn() && userId == request.auth.uid;
+    }
+
+    function isValidTeamMember(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role', 'addedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'name', 'role', 'addedAt'])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.role in ['Admin', 'Viewer']
+        && data.addedAt is string && data.addedAt.size() <= 64;
+    }
+
+    match /teamMembers/{docId} {
+      allow get: if isValidId(docId) && isOwnerData(existing());
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isValidId(docId) && isSignedIn() && isValidTeamMember(incoming());
+      allow update: if isValidId(docId)
+        && isOwnerData(existing())
+        && isValidTeamMember(incoming())
+        && incoming().uid == existing().uid
+        && incoming().addedAt == existing().addedAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'name']);
+      allow delete: if isValidId(docId) && isOwnerData(existing());
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "MailMind OS — The AI Email Operating System",
+  "description": "MailMind OS — The AI Email Operating System. AI Full Stack Developer Demo Project inspired by Gmail with 14 autonomous agents, Firebase persistence, Daily Digest, Email Sorter, and Focus Mode.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
